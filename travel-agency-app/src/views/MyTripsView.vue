@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
+import axios from 'axios'
 import { tenantConfig } from '../config/tenantConfig.js'
 import { bookingService } from '../services/bookingService.js'
 import { useAuth } from '../composables/useAuth.js'
@@ -9,6 +10,34 @@ const { userId, userEmail } = useAuth()
 const isLoading = ref(true)
 const errorMessage = ref('')
 const trips = ref([])
+const cancellingId = ref(null)
+const confirmingId = ref(null)
+
+// The professor's API has no status field on bookings.
+// We persist Pending/Confirmed in localStorage so the badge survives page refreshes.
+const STATUS_KEY = 'booking_statuses'
+const ATTRACTION_KEY = 'booking_attractions'
+
+function loadBookingAttractions(bookingId) {
+  try {
+    const stored = JSON.parse(localStorage.getItem(ATTRACTION_KEY) || '{}')
+    return stored[bookingId] || null
+  } catch { return null }
+}
+
+function loadStatuses() {
+  try { return JSON.parse(localStorage.getItem(STATUS_KEY) || '{}') } catch { return {} }
+}
+
+function saveStatus(bookingId, status) {
+  const statuses = loadStatuses()
+  statuses[bookingId] = status
+  localStorage.setItem(STATUS_KEY, JSON.stringify(statuses))
+}
+
+function getStatus(bookingId) {
+  return loadStatuses()[bookingId] || 'Pending'
+}
 
 function formatDate(value) {
   const date = new Date(value)
@@ -30,15 +59,63 @@ async function loadTrips() {
   errorMessage.value = ''
 
   try {
-    trips.value = await bookingService.listBookings({
+    const raw = await bookingService.listBookings({
       userId: userId.value,
       agentId: tenantConfig.agentId,
     })
+    trips.value = raw.map(t => ({
+      ...t,
+      _status: getStatus(t.bookingId),
+      _attractions: loadBookingAttractions(t.bookingId),
+    }))
   } catch (error) {
     errorMessage.value = error.message || 'Unable to load saved trips.'
     trips.value = []
   } finally {
     isLoading.value = false
+  }
+}
+
+async function confirmTrip(bookingId) {
+  confirmingId.value = bookingId
+  try {
+    // The Phase 2 booking ID may differ from the professor's booking ID, so this
+    // PATCH can return 404. We fire-and-forget it (.catch(() => {})) and rely on
+    // localStorage as the source of truth for the confirmed state.
+    await axios.patch(
+      `/api/phase2/bookings/${bookingId}/status`,
+      { status: 'Confirmed' },
+      { headers: { 'x-tenant-id': String(tenantConfig.agentId) } }
+    ).catch(() => {})
+    saveStatus(bookingId, 'Confirmed')
+    trips.value = trips.value.map(t =>
+      t.bookingId === bookingId ? { ...t, _status: 'Confirmed' } : t
+    )
+  } finally {
+    confirmingId.value = null
+  }
+}
+
+async function cancelTrip(bookingId) {
+  if (!confirm('Cancel this booking? This cannot be undone.')) return
+  cancellingId.value = bookingId
+  try {
+    // Phase 2 cancel is best-effort; professor's DELETE is the authoritative removal.
+    await axios.post(
+      `/api/phase2/bookings/${bookingId}/cancel`,
+      {},
+      { headers: { 'x-tenant-id': String(tenantConfig.agentId) } }
+    ).catch(() => {})
+    await bookingService.cancelBooking(bookingId)
+    trips.value = trips.value.filter(t => t.bookingId !== bookingId)
+    // Clean up the localStorage entry so the status badge doesn't reappear.
+    const statuses = loadStatuses()
+    delete statuses[bookingId]
+    localStorage.setItem(STATUS_KEY, JSON.stringify(statuses))
+  } catch (err) {
+    alert(err.message || 'Failed to cancel booking.')
+  } finally {
+    cancellingId.value = null
   }
 }
 
@@ -71,7 +148,29 @@ onMounted(() => {
             <p class="trip-card__meta">Booking #{{ trip.bookingId }}</p>
             <h2 class="trip-card__title">{{ formatDate(trip.startDate) }} to {{ formatDate(trip.endDate) }}</h2>
           </div>
-          <div class="trip-card__pill">{{ trip.flightReservations.length }} flights · {{ trip.hotelReservations.length }} hotels</div>
+          <div class="trip-card__actions">
+            <div class="trip-card__pill">{{ trip.flightReservations.length }} flights · {{ trip.hotelReservations.length }} hotels</div>
+            <span class="trip-card__status" :class="`trip-card__status--${(trip._status || 'Pending').toLowerCase()}`">
+              {{ trip._status || 'Pending' }}
+            </span>
+            <div class="trip-card__btns">
+              <button
+                v-if="trip._status !== 'Confirmed'"
+                class="trip-card__confirm"
+                :disabled="confirmingId === trip.bookingId"
+                @click="confirmTrip(trip.bookingId)"
+              >
+                {{ confirmingId === trip.bookingId ? 'Confirming…' : 'Confirm' }}
+              </button>
+              <button
+                class="trip-card__cancel"
+                :disabled="cancellingId === trip.bookingId"
+                @click="cancelTrip(trip.bookingId)"
+              >
+                {{ cancellingId === trip.bookingId ? 'Cancelling…' : 'Cancel' }}
+              </button>
+            </div>
+          </div>
         </div>
 
         <section class="trip-section">
@@ -100,6 +199,20 @@ onMounted(() => {
               <div>Check in: {{ formatDate(hotel.Check_In_Date) }} {{ hotel.Check_In_Time }}</div>
               <div>Check out: {{ formatDate(hotel.Check_Out_Date) }} {{ hotel.Check_Out_Time }}</div>
               <div>Rate: ${{ Number(hotel.Rate || 0).toLocaleString() }}</div>
+            </div>
+          </div>
+        </section>
+
+        <section v-if="trip._attractions" class="trip-section">
+          <h3 class="trip-section__title">Activity Details</h3>
+          <div class="reservation-grid">
+            <div v-for="entry in trip._attractions" :key="entry.city" class="reservation-card">
+              <div class="reservation-card__title">{{ entry.city }}</div>
+              <div v-for="a in entry.attractions" :key="a.name" class="activity-row">
+                <span>{{ a.name }}</span>
+                <span class="activity-price">{{ a.price > 0 ? '$' + a.price + '/person' : 'Free' }}</span>
+              </div>
+              <div class="activity-total">Total: ${{ Number(entry.attractionCost || 0).toLocaleString() }}</div>
             </div>
           </div>
         </section>
@@ -203,6 +316,78 @@ onMounted(() => {
   font-size: 1.2rem;
 }
 
+.trip-card__actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.4rem;
+}
+
+.trip-card__status {
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.trip-card__status--pending {
+  background: #fef9c3;
+  color: #854d0e;
+}
+
+.trip-card__status--confirmed {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.trip-card__btns {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.trip-card__confirm {
+  padding: 0.35rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid #86efac;
+  background: #f0fdf4;
+  color: #166534;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.trip-card__confirm:hover:not(:disabled) {
+  background: #dcfce7;
+}
+
+.trip-card__confirm:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.trip-card__cancel {
+  padding: 0.35rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid #fca5a5;
+  background: #fff5f5;
+  color: #dc2626;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.trip-card__cancel:hover:not(:disabled) {
+  background: #fee2e2;
+}
+
+.trip-card__cancel:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .trip-card__pill {
   padding: 0.45rem 0.75rem;
   border-radius: 999px;
@@ -248,6 +433,24 @@ onMounted(() => {
 .reservation-card__title {
   font-weight: 700;
   color: var(--color-primary-dark);
+}
+
+.activity-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.88rem;
+}
+
+.activity-price {
+  color: var(--color-text-muted);
+  font-weight: 600;
+}
+
+.activity-total {
+  font-weight: 700;
+  color: var(--color-primary);
+  margin-top: 0.25rem;
+  font-size: 0.9rem;
 }
 
 @media (max-width: 768px) {

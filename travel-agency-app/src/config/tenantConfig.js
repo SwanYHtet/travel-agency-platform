@@ -8,7 +8,9 @@ const TENANTS = {
     themeName: 'agenta',
     navLabels: [
       { key: 'trips', label: 'My Trips', icon: '📋' },
-      { key: 'deals', label: 'Special Offers', icon: '⭐' },
+      { key: 'multi-city', label: 'Multi-City', icon: '🗺️' },
+      { key: 'recommendations', label: 'Recommendations', icon: '⭐' },
+      { key: 'deals', label: 'Special Offers', icon: '🎁' },
       { key: 'support', label: 'Support', icon: '💬' },
     ],
   },
@@ -21,6 +23,8 @@ const TENANTS = {
     themeName: 'agentb',
     navLabels: [
       { key: 'trips', label: 'My Trips', icon: '🗺️' },
+      { key: 'multi-city', label: 'Multi-City', icon: '✈️' },
+      { key: 'recommendations', label: 'Recommendations', icon: '💡' },
       { key: 'deals', label: 'Best Prices', icon: '💰' },
       { key: 'support', label: 'Help Center', icon: '❓' },
     ],

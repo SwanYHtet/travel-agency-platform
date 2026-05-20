@@ -21,6 +21,18 @@ const routes = [
     component: () => import('../views/MyTripsView.vue'),
     meta: { title: 'My Trips', requiresAuth: true },
   },
+  {
+    path: '/multi-city',
+    name: 'multi-city',
+    component: () => import('../views/MultiCityView.vue'),
+    meta: { title: 'Multi-City Packages' },
+  },
+  {
+    path: '/recommendations',
+    name: 'recommendations',
+    component: () => import('../views/RecommendationsView.vue'),
+    meta: { title: 'Trip Recommendations' },
+  },
 ]
 
 const router = createRouter({

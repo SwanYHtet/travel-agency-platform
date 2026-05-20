@@ -77,6 +77,8 @@ function handleAuthButtonClick() {
 
 const navLinkMap = {
   trips: { routeName: 'trips' },
+  'multi-city': { routeName: 'multi-city' },
+  recommendations: { routeName: 'recommendations' },
 }
 
 const navItems = computed(() => {

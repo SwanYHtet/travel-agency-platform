@@ -188,4 +188,10 @@ export const bookingService = {
       return new Date(right.startDate).getTime() - new Date(left.startDate).getTime()
     })
   },
+
+  // Permanently removes the booking from the professor's database.
+  // Called after the Phase 2 cancel endpoint so both systems stay in sync.
+  async cancelBooking(bookingId) {
+    await api.delete(`/bookings/${bookingId}`)
+  },
 }
